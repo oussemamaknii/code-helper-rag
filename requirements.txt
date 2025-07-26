@@ -27,8 +27,9 @@ tiktoken==0.5.1
 
 # Web Scraping & APIs
 requests==2.31.0
-aiohttp==3.9.0
-PyGithub==1.59.1
+aiohttp==3.12.14
+PyGithub==2.6.1
+aiofiles==24.1.0
 
 # Code Analysis
 ast-comments==1.1.2
