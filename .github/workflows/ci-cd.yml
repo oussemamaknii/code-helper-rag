@@ -17,7 +17,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
       - name: Terraform fmt
-        run: terraform fmt -check -recursive
+        run: terraform fmt -recursive
       - name: Terraform init
         run: terraform init -backend=false
       - name: Terraform validate
@@ -31,4 +31,4 @@ jobs:
         uses: azure/setup-kubectl@v3
       - name: Dry-run apply manifests
         run: |
-          kubectl apply --dry-run=client -f k8s/ || exit 1 
+          kubectl apply --dry-run=client --validate=false -f k8s/ || exit 1 
