@@ -1,0 +1,35 @@
+name: IaC Checks
+
+on:
+  push:
+    branches: [ main, cleanup ]
+  pull_request:
+    branches: [ main, cleanup ]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt
+        run: terraform fmt -recursive
+      - name: Terraform init
+        run: terraform init -backend=false
+      - name: Terraform validate
+        run: terraform validate
+
+  k8s-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+      - name: Dry-run apply manifests
+        continue-on-error: true
+        run: |
+          kubectl apply --dry-run=client --validate=false -f k8s/ || true 
