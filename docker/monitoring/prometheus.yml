@@ -1,0 +1,197 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'python-code-helper'
+    environment: 'production'
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Python Code Helper API
+  - job_name: 'python-code-helper-api'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - python-code-helper
+    relabel_configs:
+      # Only scrape pods with prometheus.io/scrape annotation
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      
+      # Use custom metrics path if specified
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      
+      # Use custom port if specified
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      
+      # Add pod metadata as labels
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        action: replace
+        target_label: component
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+        action: replace
+        target_label: version
+
+  # Node Exporter (system metrics)
+  - job_name: 'node-exporter'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - monitoring
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: keep
+        regex: node-exporter
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        action: replace
+        target_label: node
+      - source_labels: [__address__]
+        regex: '(.*):.*'
+        target_label: __address__
+        replacement: '${1}:9100'
+
+  # PostgreSQL Exporter
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Redis Exporter
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Nginx Exporter
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # cAdvisor (container metrics)
+  - job_name: 'cadvisor'
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+  # Kubernetes API Server
+  - job_name: 'kubernetes-apiservers'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - default
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  # Kubernetes Nodes
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+
+  # Kube State Metrics
+  - job_name: 'kube-state-metrics'
+    static_configs:
+      - targets: ['kube-state-metrics:8080']
+    honor_labels: true
+
+  # Custom application metrics
+  - job_name: 'custom-metrics'
+    scrape_interval: 30s
+    static_configs:
+      - targets: []
+    metric_relabel_configs:
+      # Drop high-cardinality metrics
+      - source_labels: [__name__]
+        regex: 'go_memstats_.*'
+        action: drop
+      
+      # Rename metrics for consistency
+      - source_labels: [__name__]
+        regex: 'python_code_helper_(.*)'
+        target_label: __name__
+        replacement: 'app_${1}'
+
+# Remote write configuration (for long-term storage)
+remote_write:
+  - url: "http://cortex:9009/api/prom/push"
+    write_relabel_configs:
+      # Only send specific metrics to reduce costs
+      - source_labels: [__name__]
+        regex: 'app_.*|http_.*|process_.*'
+        action: keep
+    queue_config:
+      max_samples_per_send: 1000
+      batch_send_deadline: 5s
+      max_shards: 10
+      min_shards: 1 

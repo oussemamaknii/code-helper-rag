@@ -1,0 +1,410 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-code-helper
+  namespace: python-code-helper
+  labels:
+    app.kubernetes.io/name: python-code-helper
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: python-code-helper-system
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: python-code-helper
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: python-code-helper
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: python-code-helper-system
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: python-code-helper
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: python-code-helper
+        image: python-code-helper:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        # Configuration from ConfigMap
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: APP_ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: LOG_LEVEL
+        - name: API_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: API_HOST
+        - name: API_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: API_PORT
+        
+        # Database configuration
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)"
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: DATABASE_HOST
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: DATABASE_PORT
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: DATABASE_NAME
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-password
+        
+        # Redis configuration
+        - name: REDIS_URL
+          value: "redis://$(REDIS_HOST):$(REDIS_PORT)/$(REDIS_DB)"
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: REDIS_PORT
+        - name: REDIS_DB
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: REDIS_DB
+        
+        # API Keys from secrets
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: python-code-helper-secrets
+              key: openai-api-key
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: python-code-helper-secrets
+              key: anthropic-api-key
+        - name: PINECONE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: python-code-helper-secrets
+              key: pinecone-api-key
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: python-code-helper-secrets
+              key: github-token
+        
+        # Vector database settings
+        - name: PINECONE_ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: PINECONE_ENVIRONMENT
+        - name: PINECONE_INDEX_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: python-code-helper-config
+              key: PINECONE_INDEX_NAME
+        
+        # Security settings
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: python-code-helper-secrets
+              key: jwt-secret-key
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Resource limits
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        
+        # Volume mounts
+        volumeMounts:
+        - name: app-logs
+          mountPath: /app/logs
+        - name: app-cache
+          mountPath: /app/cache
+        - name: tmp
+          mountPath: /tmp
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: app-logs
+        emptyDir: {}
+      - name: app-cache
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      
+      # Node scheduling
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                  - python-code-helper
+              topologyKey: kubernetes.io/hostname
+      
+      # Tolerations (if needed for specific node pools)
+      tolerations: []
+      
+      # Node selector (if needed for specific node pools)
+      nodeSelector: {}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: python-code-helper
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: python-code-helper-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: python-code-helper-system
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - name: postgres
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-db
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+          successThreshold: 1
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+          successThreshold: 1
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: python-code-helper
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: python-code-helper-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: python-code-helper-system
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --maxmemory
+        - "256mb"
+        - --maxmemory-policy
+        - "allkeys-lru"
+        
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 1
+          failureThreshold: 3
+          successThreshold: 1
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc 

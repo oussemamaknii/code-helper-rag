@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: python-code-helper
+  labels:
+    name: python-code-helper
+    app.kubernetes.io/name: python-code-helper
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: python-code-helper-system
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "Namespace for Python Code Helper RAG System"
+    contact: "python-code-helper-team@example.com"
+    cost-center: "engineering"
+    environment: "production" 
